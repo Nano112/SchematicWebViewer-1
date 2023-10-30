@@ -155,7 +155,6 @@ export async function renderSchematic(
         const blockModelData = modelLoader.getBlockModelData(block, blockState);
 
         if (!blockModelData.models.length) {
-            console.log(blockState);
             continue;
         }
 

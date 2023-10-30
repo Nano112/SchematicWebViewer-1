@@ -4,6 +4,8 @@ dist/
 .parcel-cache/
 
 .idea/
+.history/
+.vscode/
 *.iml
 
 .DS_Store
