@@ -90,7 +90,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
             `textures/${tex}.png`
         );
         if (blob === undefined) {
-            console.log(tex);
             return undefined;
         }
 

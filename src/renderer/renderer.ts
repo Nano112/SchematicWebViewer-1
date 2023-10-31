@@ -14,17 +14,24 @@ import {
 } from './utils';
 import { loadBlockStateDefinition } from './model/parser';
 import { addArrowToScene, addBarsToScene } from './shapes';
+
 import {
     ArcRotateCamera,
     Color3,
     Color4,
     Engine,
+    WebGPUEngine,
     HemisphericLight,
     Mesh,
+    MeshBuilder,
     Scene,
     ScenePerformancePriority,
     Vector3,
+    Texture,
 } from '@babylonjs/core';
+
+import { GridMaterial } from '@babylonjs/materials';
+import { Inspector } from '@babylonjs/inspector';
 
 const CASSETTE_DECK_URL = `https://services.enginehub.org/cassette-deck/minecraft-versions/find?dataVersion=`;
 const URL_1_13 =
@@ -45,6 +52,221 @@ async function getClientJarUrlDefault({
     }`;
 }
 
+function getCameraSetup(
+    scene: Scene,
+    cameraOffset: number,
+    canvas: HTMLCanvasElement
+): ArcRotateCamera {
+    const camera = new ArcRotateCamera(
+        'camera',
+        -Math.PI / 2,
+        Math.PI / 2.5,
+        10,
+        new Vector3(0, 0, 0),
+        scene
+    );
+    camera.wheelPrecision = 50;
+    camera.attachControl(false, true);
+    camera.radius = cameraOffset * 3;
+    camera.attachControl(canvas, true);
+    return camera;
+}
+
+function createLight(scene: Scene): HemisphericLight {
+    const light = new HemisphericLight('light1', new Vector3(1, 1, 0), scene);
+    light.specular = new Color3(0, 0, 0);
+    return light;
+}
+
+function setSceneColor(color: string | number, scene: Scene) {
+    if (color !== 'transparent') {
+        scene.clearColor = Color4.FromHexString(`#${color.toString(16)}FF`);
+    } else {
+        scene.clearColor = new Color4(0, 0, 0, 0);
+    }
+}
+
+function getSceneSetup(engine: Engine, backgroundColor: number | string) {
+    const scene = new Scene(engine, {
+        useGeometryUniqueIdsMap: true,
+        useClonedMeshMap: true,
+    });
+    scene.performancePriority = ScenePerformancePriority.Intermediate;
+    scene.renderingManager.maintainStateBetweenFrames = true;
+    scene.skipFrustumClipping = true;
+    setSceneColor(backgroundColor, scene);
+    createLight(scene);
+    return scene;
+}
+
+async function updateBlockModelLookup(
+    blockModelLookup: Map<string, BlockModelData>,
+    loadedSchematic: ReturnType<typeof loadSchematic>,
+    resourceLoader: Promise<ReturnType<typeof getResourceLoader>>,
+    modelLoader: ReturnType<typeof getModelLoader>
+): Promise<Map<string, BlockModelData>> {
+    for (const block of loadedSchematic.blockTypes) {
+        if (INVISIBLE_BLOCKS.has(block.type)) {
+            continue;
+        }
+
+        if (blockModelLookup.get(hashBlockForMap(block))) {
+            continue;
+        }
+        const blockState = await loadBlockStateDefinition(
+            block.type,
+            await resourceLoader
+        );
+        const blockModelData = modelLoader.getBlockModelData(block, blockState);
+
+        if (!blockModelData.models.length) {
+            continue;
+        }
+
+        blockModelLookup.set(hashBlockForMap(block), blockModelData);
+    }
+    return blockModelLookup;
+}
+
+function hashBlockForMap(block: Block) {
+    return `${block.type}:${JSON.stringify(block.properties)}`;
+}
+
+async function computeSchematicMesh(
+    loadedSchematic: ReturnType<typeof loadSchematic>,
+    blockModelLookup: Map<string, BlockModelData>,
+    modelLoader: ReturnType<typeof getModelLoader>,
+    scene: Scene,
+    worldWidth: number,
+    worldHeight: number,
+    worldLength: number
+) {
+    const xTranslation = -worldWidth / 2 + 0.5;
+    const yTranslation = -worldHeight / 2 + 0.5;
+    const zTranslation = -worldLength / 2 + 0.5;
+    scene.blockMaterialDirtyMechanism = true;
+    // list of meshes to be simplified before adding to scene
+    for (const pos of loadedSchematic) {
+        const { x, y, z } = pos;
+        const block = loadedSchematic.getBlock(pos);
+
+        if (!block || INVISIBLE_BLOCKS.has(block.type)) {
+            continue;
+        }
+
+        const modelData = blockModelLookup.get(hashBlockForMap(block));
+        if (!modelData) {
+            continue;
+        }
+        let anyVisible = false;
+        console.log('Block', block);
+        for (const face of POSSIBLE_FACES) {
+            const faceOffset = faceToFacingVector(face);
+            console.log('faceOffset', faceOffset);
+            const offBlock = loadedSchematic.getBlock({
+                x: x + faceOffset[0],
+                y: y + faceOffset[1],
+                z: z + faceOffset[2],
+            });
+            if (!offBlock || NON_OCCLUDING_BLOCKS.has(offBlock.type)) {
+                anyVisible = true;
+                break;
+            }
+        }
+
+        if (!anyVisible) {
+            continue;
+        }
+        const option = modelLoader.getModelOption(modelData);
+        console.log('option', option, 'block', block);
+        const meshes = await modelLoader.getModel(option, block, scene);
+        for (const mesh of meshes) {
+            if (!mesh) {
+                continue;
+            }
+            mesh.position.x += xTranslation + x;
+            mesh.position.y += yTranslation + y;
+            mesh.position.z += zTranslation + z;
+            mesh.freezeWorldMatrix();
+            scene.addMesh(mesh);
+        }
+    }
+    // simplify the mesh using babylon's built in simplification
+    // BABYLON.SceneLoader.ImportMesh("", "./", "DanceMoves.babylon", scene, (newMeshes, particleSystems, skeletons) => {
+    //     newMeshes[1].simplify(
+    //       [
+    //         { quality: 0.9, distance: 25 },
+    //         { quality: 0.3, distance: 50 },
+    //       ],
+    //       false,
+    //       BABYLON.SimplificationType.QUADRATIC,
+    //       function () {
+    //         alert("LOD finisehd, let's have a beer!");
+    //       },
+    //     );
+    //   });
+    // SceneLoader.ImportMesh(
+    //     '',
+    //     './',
+    //     'DanceMoves.babylon',
+    //     scene,
+    //     (newMeshes, particleSystems, skeletons) => {
+    //         newMeshes[1].simplify(
+    //             [
+    //                 { quality: 0.9, distance: 25 },
+    //                 { quality: 0.3, distance: 50 },
+    //             ],
+    //             false,
+    //             0,
+    //             function () {
+    //                 alert("LOD finisehd, let's have a beer!");
+    //             }
+    //         );
+    //     }
+    // );
+    scene.blockMaterialDirtyMechanism = false;
+}
+
+async function createEngine(canvas: HTMLCanvasElement): Promise<Engine> {
+    const webGPUSupported = await WebGPUEngine.IsSupportedAsync;
+    if (webGPUSupported) {
+        const engine = new WebGPUEngine(canvas, {
+            alpha: false,
+            powerPreference: 'high-performance',
+        });
+        await engine.initAsync();
+        return engine;
+    }
+    return new Engine(canvas, true);
+}
+
+function addGrid(scene: Scene, gridHeight: number) {
+    console.log('Adding grid at height', gridHeight);
+    const gridMaterial = new GridMaterial('default', scene);
+    gridMaterial.majorUnitFrequency = 10;
+    gridMaterial.minorUnitVisibility = 0.4;
+    gridMaterial.gridRatio = 1;
+    gridMaterial.backFaceCulling = false;
+    gridMaterial.mainColor = new Color3(1, 1, 1);
+    gridMaterial.lineColor = new Color3(1, 1, 1);
+    gridMaterial.opacity = 0.7;
+    gridMaterial.zOffset = -1;
+    gridMaterial.opacityTexture = new Texture(
+        'https://assets.babylonjs.com/environments/backgroundGround.png',
+        scene
+    );
+    const grid = MeshBuilder.CreateGround(
+        'ground',
+        {
+            width: 100,
+            height: 100,
+        },
+        scene
+    );
+    grid.position.y = gridHeight;
+    grid.material = gridMaterial;
+}
+
 export async function renderSchematic(
     canvas: HTMLCanvasElement,
     schematic: string,
@@ -63,10 +285,15 @@ export async function renderSchematic(
         disableAutoRender = false,
     }: SchematicRenderOptions
 ): Promise<SchematicHandles> {
+    console.log('Rendering schematic');
+    Mesh.INSTANCEDMESH_SORT_TRANSPARENT = true;
+    const blockModelLookup: Map<string, BlockModelData> = new Map();
+
     const engine = new Engine(canvas, antialias, {
         alpha: backgroundColor !== 'transparent',
         powerPreference: 'high-performance',
     });
+    // const engine = await createEngine(canvas);
     if (size) {
         if (typeof size === 'number') {
             engine.setSize(size, size);
@@ -78,60 +305,13 @@ export async function renderSchematic(
         }
     }
 
-    const scene = new Scene(engine, {
-        useGeometryUniqueIdsMap: true,
-        useClonedMeshMap: true,
-    });
-    scene.performancePriority = ScenePerformancePriority.Intermediate;
-    scene.renderingManager.maintainStateBetweenFrames = true;
-    scene.skipFrustumClipping = true;
-
-    scene.ambientColor = new Color3(0.5, 0.5, 0.5);
-    if (backgroundColor !== 'transparent') {
-        scene.clearColor = Color4.FromHexString(
-            `#${backgroundColor.toString(16)}FF`
-        );
-    } else {
-        scene.clearColor = new Color4(0, 0, 0, 0);
-    }
-
-    let hasDestroyed = false;
-
-    const camera = new ArcRotateCamera(
-        'camera',
-        -Math.PI / 2,
-        Math.PI / 2.5,
-        10,
-        new Vector3(0, 0, 0),
-        scene
-    );
-    camera.wheelPrecision = 50;
-
-    const light = new HemisphericLight('light1', new Vector3(1, 1, 0), scene);
-    light.specular = new Color3(0, 0, 0);
-
-    const render = () => {
-        if (hasDestroyed) {
-            return;
-        }
-
-        scene.render();
-    };
-
-    if (!disableAutoRender) {
-        engine.runRenderLoop(render);
-    }
-
     const loadedSchematic = loadSchematic(parseNbt(schematic));
-
     const {
         width: worldWidth,
         height: worldHeight,
         length: worldLength,
     } = loadedSchematic;
-
     const cameraOffset = Math.max(worldWidth, worldLength, worldHeight) / 2 + 1;
-    camera.radius = cameraOffset * 3;
 
     const resourceLoader = await getResourceLoader([
         await getClientJarUrl({
@@ -142,78 +322,40 @@ export async function renderSchematic(
     ]);
     const modelLoader = getModelLoader(resourceLoader);
 
-    const blockModelLookup: Map<Block, BlockModelData> = new Map();
+    await updateBlockModelLookup(
+        blockModelLookup,
+        loadedSchematic,
+        resourceLoader,
+        modelLoader
+    );
 
-    for (const block of loadedSchematic.blockTypes) {
-        if (INVISIBLE_BLOCKS.has(block.type)) {
-            continue;
+    const scene = getSceneSetup(engine, backgroundColor);
+    addGrid(scene, -worldHeight / 2);
+    const camera = getCameraSetup(scene, cameraOffset, canvas);
+    // Inspector.Show(scene, {});
+
+    let hasDestroyed = false;
+
+    const render = () => {
+        if (hasDestroyed) {
+            return;
         }
-        const blockState = await loadBlockStateDefinition(
-            block.type,
-            resourceLoader
-        );
-        const blockModelData = modelLoader.getBlockModelData(block, blockState);
+        scene.render();
+    };
 
-        if (!blockModelData.models.length) {
-            continue;
-        }
-
-        blockModelLookup.set(block, blockModelData);
+    if (!disableAutoRender) {
+        engine.runRenderLoop(render);
     }
 
-    Mesh.INSTANCEDMESH_SORT_TRANSPARENT = true;
-
-    scene.blockMaterialDirtyMechanism = true;
-    for (const pos of loadedSchematic) {
-        const { x, y, z } = pos;
-        const block = loadedSchematic.getBlock(pos);
-
-        if (!block || INVISIBLE_BLOCKS.has(block.type)) {
-            continue;
-        }
-
-        const modelData = blockModelLookup.get(block);
-        if (!modelData) {
-            continue;
-        }
-
-        let anyVisible = false;
-
-        for (const face of POSSIBLE_FACES) {
-            const faceOffset = faceToFacingVector(face);
-            const offBlock = loadedSchematic.getBlock({
-                x: x + faceOffset[0],
-                y: y + faceOffset[1],
-                z: z + faceOffset[2],
-            });
-
-            if (!offBlock || NON_OCCLUDING_BLOCKS.has(offBlock.type)) {
-                anyVisible = true;
-                break;
-            }
-        }
-
-        if (!anyVisible) {
-            continue;
-        }
-
-        const option = modelLoader.getModelOption(modelData);
-
-        const meshes = await modelLoader.getModel(option, block, scene);
-        for (const mesh of meshes) {
-            if (!mesh) {
-                continue;
-            }
-
-            mesh.position.x += -worldWidth / 2 + x + 0.5;
-            mesh.position.y += -worldHeight / 2 + y + 0.5;
-            mesh.position.z += -worldLength / 2 + z + 0.5;
-            mesh.freezeWorldMatrix();
-
-            scene.addMesh(mesh);
-        }
-    }
-    scene.blockMaterialDirtyMechanism = false;
+    await computeSchematicMesh(
+        loadedSchematic,
+        blockModelLookup,
+        modelLoader,
+        scene,
+        worldWidth,
+        worldHeight,
+        worldLength
+    );
 
     if (renderArrow) {
         addArrowToScene(scene, cameraOffset);
@@ -233,11 +375,6 @@ export async function renderSchematic(
     if (debug) {
         scene.debugLayer.show();
     }
-    blockModelLookup.clear();
-    resourceLoader.clearCache();
-    modelLoader.clearCache();
-
-    camera.attachControl(false, true);
 
     if (orbit) {
         scene.registerBeforeRender(() => {
@@ -245,7 +382,62 @@ export async function renderSchematic(
         });
     }
 
+    const swapSchematic = async (
+        engine: Engine,
+        blockModelLookup: Map<string, BlockModelData>,
+        scene: Scene,
+        newSchematicString: string
+    ) => {
+        // before reconstructing the scene, we need to remove the old meshes
+        scene.blockMaterialDirtyMechanism = true;
+        // scene.meshes.forEach(mesh => {
+        //     if (mesh.name !== 'ground') {
+        //         mesh.dispose();
+        //     }
+        // });
+        scene.meshes = [];
+
+        scene.blockMaterialDirtyMechanism = false;
+
+        const newLoadedSchematic = loadSchematic(parseNbt(newSchematicString));
+        const { height: worldHeight } = loadedSchematic;
+        addGrid(scene, -worldHeight / 2);
+        await updateBlockModelLookup(
+            blockModelLookup,
+            newLoadedSchematic,
+            resourceLoader,
+            modelLoader
+        );
+        console.log({
+            blockModelLookup,
+            modelLoader,
+            scene,
+        });
+        await computeSchematicMesh(
+            newLoadedSchematic,
+            blockModelLookup,
+            modelLoader,
+            scene,
+            newLoadedSchematic.width,
+            newLoadedSchematic.height,
+            newLoadedSchematic.length
+        );
+
+        scene.createOrUpdateSelectionOctree();
+        scene.freezeMaterials();
+        engine.runRenderLoop(render);
+    };
+
     return {
+        swapSchematic: async (newSchematicString: string) => {
+            await swapSchematic(
+                engine,
+                blockModelLookup,
+                scene,
+                newSchematicString
+            );
+        },
+
         resize(size: number): void {
             engine.setSize(size, size);
         },

@@ -28,6 +28,12 @@ export interface SchematicHandles {
      * Note: This method is provided for advanced use cases and should not be used in most cases.
      */
     getEngine(): Engine;
+    /**
+     * Swap the schematic being rendered.
+     *
+     * @param newSchematicString The new schematic string
+     */
+    swapSchematic(newSchematicString: string): Promise<void>;
 }
 
 export interface GetClientJarUrlProps {
