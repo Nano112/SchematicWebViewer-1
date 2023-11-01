@@ -28,6 +28,7 @@ import {
     ScenePerformancePriority,
     Vector3,
     Texture,
+    InstancedMesh,
 } from '@babylonjs/core';
 
 import { GridMaterial } from '@babylonjs/materials';
@@ -159,10 +160,8 @@ async function computeSchematicMesh(
             continue;
         }
         let anyVisible = false;
-        console.log('Block', block);
         for (const face of POSSIBLE_FACES) {
             const faceOffset = faceToFacingVector(face);
-            console.log('faceOffset', faceOffset);
             const offBlock = loadedSchematic.getBlock({
                 x: x + faceOffset[0],
                 y: y + faceOffset[1],
@@ -178,7 +177,6 @@ async function computeSchematicMesh(
             continue;
         }
         const option = modelLoader.getModelOption(modelData);
-        console.log('option', option, 'block', block);
         const meshes = await modelLoader.getModel(option, block, scene);
         for (const mesh of meshes) {
             if (!mesh) {
@@ -191,57 +189,10 @@ async function computeSchematicMesh(
             scene.addMesh(mesh);
         }
     }
-    // simplify the mesh using babylon's built in simplification
-    // BABYLON.SceneLoader.ImportMesh("", "./", "DanceMoves.babylon", scene, (newMeshes, particleSystems, skeletons) => {
-    //     newMeshes[1].simplify(
-    //       [
-    //         { quality: 0.9, distance: 25 },
-    //         { quality: 0.3, distance: 50 },
-    //       ],
-    //       false,
-    //       BABYLON.SimplificationType.QUADRATIC,
-    //       function () {
-    //         alert("LOD finisehd, let's have a beer!");
-    //       },
-    //     );
-    //   });
-    // SceneLoader.ImportMesh(
-    //     '',
-    //     './',
-    //     'DanceMoves.babylon',
-    //     scene,
-    //     (newMeshes, particleSystems, skeletons) => {
-    //         newMeshes[1].simplify(
-    //             [
-    //                 { quality: 0.9, distance: 25 },
-    //                 { quality: 0.3, distance: 50 },
-    //             ],
-    //             false,
-    //             0,
-    //             function () {
-    //                 alert("LOD finisehd, let's have a beer!");
-    //             }
-    //         );
-    //     }
-    // );
     scene.blockMaterialDirtyMechanism = false;
 }
 
-async function createEngine(canvas: HTMLCanvasElement): Promise<Engine> {
-    const webGPUSupported = await WebGPUEngine.IsSupportedAsync;
-    if (webGPUSupported) {
-        const engine = new WebGPUEngine(canvas, {
-            alpha: false,
-            powerPreference: 'high-performance',
-        });
-        await engine.initAsync();
-        return engine;
-    }
-    return new Engine(canvas, true);
-}
-
 function addGrid(scene: Scene, gridHeight: number) {
-    console.log('Adding grid at height', gridHeight);
     const gridMaterial = new GridMaterial('default', scene);
     gridMaterial.majorUnitFrequency = 10;
     gridMaterial.minorUnitVisibility = 0.4;
@@ -285,7 +236,6 @@ export async function renderSchematic(
         disableAutoRender = false,
     }: SchematicRenderOptions
 ): Promise<SchematicHandles> {
-    console.log('Rendering schematic');
     Mesh.INSTANCEDMESH_SORT_TRANSPARENT = true;
     const blockModelLookup: Map<string, BlockModelData> = new Map();
 
@@ -293,7 +243,6 @@ export async function renderSchematic(
         alpha: backgroundColor !== 'transparent',
         powerPreference: 'high-performance',
     });
-    // const engine = await createEngine(canvas);
     if (size) {
         if (typeof size === 'number') {
             engine.setSize(size, size);
@@ -330,9 +279,10 @@ export async function renderSchematic(
     );
 
     const scene = getSceneSetup(engine, backgroundColor);
-    addGrid(scene, -worldHeight / 2);
+    Inspector.Show(scene, {});
+
+    // addGrid(scene, -worldHeight / 2);
     const camera = getCameraSetup(scene, cameraOffset, canvas);
-    // Inspector.Show(scene, {});
 
     let hasDestroyed = false;
 
@@ -388,31 +338,26 @@ export async function renderSchematic(
         scene: Scene,
         newSchematicString: string
     ) => {
-        // before reconstructing the scene, we need to remove the old meshes
-        scene.blockMaterialDirtyMechanism = true;
-        // scene.meshes.forEach(mesh => {
-        //     if (mesh.name !== 'ground') {
-        //         mesh.dispose();
-        //     }
-        // });
-        scene.meshes = [];
-
-        scene.blockMaterialDirtyMechanism = false;
+        const meshes = scene.meshes;
+        scene.debugLayer.show();
+        const instancedMeshes = meshes.filter(
+            mesh => mesh instanceof InstancedMesh
+        ) as InstancedMesh[];
+        for (const instancedMesh of instancedMeshes) {
+            scene.removeMesh(instancedMesh);
+            instancedMesh.dispose(true, false);
+        }
+        // THIS !!!!!!! 
+        modelLoader.clearCache();
 
         const newLoadedSchematic = loadSchematic(parseNbt(newSchematicString));
-        const { height: worldHeight } = loadedSchematic;
-        addGrid(scene, -worldHeight / 2);
         await updateBlockModelLookup(
             blockModelLookup,
             newLoadedSchematic,
             resourceLoader,
             modelLoader
         );
-        console.log({
-            blockModelLookup,
-            modelLoader,
-            scene,
-        });
+
         await computeSchematicMesh(
             newLoadedSchematic,
             blockModelLookup,
