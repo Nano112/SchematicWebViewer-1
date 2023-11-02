@@ -4,6 +4,7 @@ import type { ResourceLoader } from '../../resource/resourceLoader';
 import { TRANSPARENT_BLOCKS } from '../utils';
 import { loadModel } from './parser';
 import type {
+    BlockModel,
     BlockModelData,
     BlockModelOption,
     BlockStateDefinition,
@@ -34,6 +35,7 @@ const TINT_COLOR = new Color4(145 / 255, 189 / 255, 89 / 255, 1);
 const WATER_COLOR = new Color4(36 / 255, 57 / 255, 214 / 255, 1);
 const LAVA_COLOR = new Color4(232 / 255, 89 / 255, 23 / 255, 1);
 const AMBIENT_LIGHT = new Color3(0.5, 0.5, 0.5);
+const DEFAULT_UV = [0, 0, 16, 16];
 
 const DEG2RAD = Math.PI / 180;
 
@@ -67,10 +69,12 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
     async function getTextureMaterial(
         tex: string,
         scene: Scene,
-        rotation?: number,
+        // rotation?: number,
+        faceData: any,
         transparent?: boolean
     ): Promise<Material> {
         // Normalise values for better caching.
+        let rotation = faceData.rotation;
         if (rotation === 0) {
             rotation = undefined;
         }
@@ -92,12 +96,14 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         if (blob === undefined) {
             return undefined;
         }
-
+        // TODO: Figure out why the fuck I have to do this nonsense to get the texture to render correctly.
+        const inverted = faceData.texture === '#top';
+        console.log(faceData, inverted);
         const texture = new Texture(
             blob,
             scene,
             false,
-            true,
+            !inverted,
             Texture.NEAREST_NEAREST_MIPNEAREST
         );
         texture.hasAlpha = transparent;
@@ -109,9 +115,9 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
 
         const mat = new StandardMaterial(cacheKey, scene);
         mat.diffuseTexture = texture;
-        mat.useAlphaFromDiffuseTexture = transparent;
+        // mat.useAlphaFromDiffuseTexture = transparent;
         mat.ambientColor = AMBIENT_LIGHT;
-        mat.disableDepthWrite = transparent;
+        // mat.disableDepthWrite = transparent;
 
         materialCache.set(cacheKey, mat);
         return mat;
@@ -235,6 +241,112 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         return { name, holders };
     };
 
+    function resolveTexture(ref: string, model: BlockModel): string {
+        while (ref.startsWith('#')) {
+            ref = model.textures[ref.substring(1)];
+        }
+        return ref;
+    }
+
+    function getSizeFromElement(element: BlockModel['elements'][0]) {
+        return [
+            element.to[0] - element.from[0],
+            element.to[1] - element.from[1],
+            element.to[2] - element.from[2],
+        ];
+    }
+
+    function normalizeElementCoords(element: BlockModel['elements'][0]) {
+        element.from = element.from.map(normalize) as Vector;
+        element.to = element.to.map(normalize) as Vector;
+        if (element.rotation) {
+            element.rotation.origin = element.rotation.origin.map(
+                normalize
+            ) as Vector;
+        }
+    }
+
+    function getColorForElement(faceData: any, tex: string): Color4 {
+        if (faceData.tintindex !== undefined) {
+            return TINT_COLOR;
+        } else if (tex.startsWith('block/water_')) {
+            return WATER_COLOR;
+        } else if (tex.startsWith('block/lava_')) {
+            return LAVA_COLOR;
+        } else {
+            return undefined;
+        }
+    }
+
+    function applyRotation(box: Mesh, rotation: any) {
+        box.setPivotPoint(
+            new Vector3(
+                rotation.origin[0],
+                rotation.origin[1],
+                rotation.origin[2]
+            ),
+            Space.WORLD
+        );
+
+        const radianRotation = rotation.angle * DEG2RAD;
+
+        switch (rotation.axis) {
+            case 'y':
+                box.rotate(Axis.Y, radianRotation, Space.WORLD);
+                break;
+            case 'x':
+                box.rotate(Axis.X, radianRotation, Space.WORLD);
+                break;
+            case 'z':
+                box.rotate(Axis.Z, radianRotation, Space.WORLD);
+                break;
+        }
+
+        box.setPivotPoint(new Vector3(0, 0, 0));
+    }
+
+    async function processFaceData(
+        element: BlockModel['elements'][0],
+        model: BlockModel,
+        scene: Scene,
+        block: Block
+    ) {
+        const colours = [];
+        const uvs = [];
+        const subMaterials: Material[] = [];
+        let hasColor = false;
+        for (const face of POSSIBLE_FACES) {
+            const faceData = element.faces[face];
+            if (!faceData) {
+                subMaterials.push(undefined);
+                colours.push(undefined);
+                uvs.push(undefined);
+                continue;
+            }
+            faceData.uv = (faceData.uv || DEFAULT_UV).map(u => u / 16) as [
+                number,
+                number,
+                number,
+                number,
+            ];
+
+            const tex = resolveTexture(faceData.texture, model);
+            hasColor = true;
+            colours.push(getColorForElement(faceData, tex));
+            subMaterials.push(
+                await getTextureMaterial(
+                    tex,
+                    scene,
+                    faceData,
+                    TRANSPARENT_BLOCKS.has(block.type) ||
+                        faceData.texture.includes('overlay')
+                )
+            );
+            uvs.push(new Vector4(...faceData.uv));
+        }
+        return { colours, uvs, subMaterials, hasColor };
+    }
+
     const getModel = async (
         data: BlockModelOption,
         block: Block,
@@ -253,17 +365,22 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
             modelIndex++
         ) {
             const modelHolder = data.holders[modelIndex];
+
             const model = await loadModel(modelHolder.model, resourceLoader);
-            const resolveTexture = (ref: string) => {
-                while (ref.startsWith('#')) {
-                    ref = model.textures[ref.substring(1)];
-                }
-
-                return ref;
-            };
-
+            console.log(model);
+            if (block.type === 'redstone_wire') {
+                console.log(modelHolder);
+                console.log(model);
+                // make a placeholder texture until we can figure out how to do this properly
+                model.textures['all'] = model.textures.particle;
+                const temporaryModel = deepmerge(
+                    await loadModel('block/cube_all', resourceLoader),
+                    model
+                );
+                model.textures = temporaryModel.textures;
+                model.elements = temporaryModel.elements;
+            }
             if (block.type === 'water' || block.type === 'lava') {
-                // These blocks are not rendered via models, so handle specially.
                 model.textures['all'] = model.textures.particle;
                 const temporaryModel = deepmerge(
                     await loadModel('block/cube_all', resourceLoader),
@@ -273,106 +390,49 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                 model.elements = temporaryModel.elements;
             }
 
-            if (model.elements) {
-                for (const element of model.elements) {
-                    if (Object.keys(element.faces).length === 0) {
+            if (!model.elements) {
+                continue;
+            }
+            for (const element of model.elements) {
+                if (Object.keys(element.faces).length === 0) {
+                    continue;
+                }
+                if (element.faces['bottom']) {
+                    element.faces['down'] = element.faces['bottom'];
+                }
+
+                normalizeElementCoords(element);
+                const elementSize = getSizeFromElement(element);
+                const faceData = await processFaceData(
+                    element,
+                    model,
+                    scene,
+                    block
+                );
+                const box = MeshBuilder.CreateBox(
+                    `${data.name}-${modelIndex}`,
+                    {
+                        width: elementSize[0] || 0.001,
+                        height: elementSize[1] || 0.001,
+                        depth: elementSize[2] || 0.001,
+                        wrap: true,
+                        faceColors: faceData.colours || undefined,
+                        updatable: false,
+                        faceUV: faceData.uvs || undefined,
+                    },
+                    scene
+                );
+                box.doNotSyncBoundingInfo = true;
+
+                const verticesCount = box.getTotalVertices();
+                let { subMaterials } = faceData;
+                const subMeshes = [];
+                for (let i = 0; i < POSSIBLE_FACES.length; i++) {
+                    if (!subMaterials[i]) {
                         continue;
                     }
-
-                    // Rewrite bottom to down for weird MC quirk.
-                    if (element.faces['bottom']) {
-                        element.faces['down'] = element.faces['bottom'];
-                    }
-
-                    // Normalize to/from to local coords.
-                    element.from = element.from.map(normalize) as Vector;
-                    element.to = element.to.map(normalize) as Vector;
-                    if (element.rotation) {
-                        element.rotation.origin = element.rotation.origin.map(
-                            normalize
-                        ) as Vector;
-                    }
-
-                    const elementSize = [
-                        element.to[0] - element.from[0],
-                        element.to[1] - element.from[1],
-                        element.to[2] - element.from[2],
-                    ];
-
-                    const colours = [];
-                    const uvs = [];
-                    let hasColor = false;
-                    let subMaterials: Material[] = [];
-
-                    for (const face of POSSIBLE_FACES) {
-                        const faceData = element.faces[face];
-                        if (!faceData) {
-                            subMaterials.push(undefined);
-                            colours.push(undefined);
-                            uvs.push(undefined);
-                            continue;
-                        }
-                        const tex = resolveTexture(faceData.texture);
-
-                        subMaterials.push(
-                            await getTextureMaterial(
-                                tex,
-                                scene,
-                                faceData.rotation,
-                                TRANSPARENT_BLOCKS.has(block.type) ||
-                                    faceData.texture.includes('overlay')
-                            )
-                        );
-
-                        let color: Color4;
-                        if (faceData.tintindex !== undefined) {
-                            color = TINT_COLOR;
-                        } else if (tex.startsWith('block/water_')) {
-                            color = WATER_COLOR;
-                        } else if (tex.startsWith('block/lava_')) {
-                            color = LAVA_COLOR;
-                        } else {
-                            colours.push(undefined);
-                            continue;
-                        }
-                        hasColor = true;
-                        colours.push(color);
-
-                        if (!faceData.uv) {
-                            faceData.uv = [0, 0, 16, 16];
-                        }
-                        faceData.uv = faceData.uv.map(u => u / 16) as [
-                            number,
-                            number,
-                            number,
-                            number,
-                        ];
-                        uvs.push(new Vector4(...faceData.uv));
-                    }
-
-                    const box = MeshBuilder.CreateBox(
-                        `${data.name}-${modelIndex}`,
-                        {
-                            width: elementSize[0] || 0.001,
-                            height: elementSize[1] || 0.001,
-                            depth: elementSize[2] || 0.001,
-                            wrap: true,
-                            faceColors: hasColor ? colours : undefined,
-                            updatable: false,
-                            faceUV: uvs,
-                        },
-                        scene
-                    );
-                    box.doNotSyncBoundingInfo = true;
-
-                    const subMeshes = [];
-                    const verticesCount = box.getTotalVertices();
-                    for (let i = 0; i < POSSIBLE_FACES.length; i++) {
-                        if (!subMaterials[i]) {
-                            continue;
-                        }
-                        // Only create the submesh if it has a material.
-                        const subMesh = new SubMesh(
+                    subMeshes.push(
+                        new SubMesh(
                             subMeshes.length,
                             i,
                             verticesCount,
@@ -382,104 +442,41 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                             undefined,
                             true,
                             false
-                        );
-                        subMeshes.push(subMesh);
-                    }
-                    box.subMeshes = subMeshes;
-                    // Remove the undefined ones.
-                    subMaterials = subMaterials.filter(mat => mat);
-
-                    // If we're a list of the same material, just use that.
-                    if (subMaterials.length > 1) {
-                        const testMaterial = subMaterials[0];
-                        let allMatch = true;
-                        for (let i = 1; i < subMaterials.length; i++) {
-                            if (subMaterials[i] !== testMaterial) {
-                                allMatch = false;
-                                break;
-                            }
-                        }
-                        if (allMatch) {
-                            subMaterials = [testMaterial];
-                        }
-                    }
-
-                    let material: Material = undefined;
-                    if (subMaterials.length > 1) {
-                        material = new MultiMaterial(
-                            `${data.name}-${modelIndex}`,
-                            scene
-                        );
-                        (material as MultiMaterial).subMaterials = subMaterials;
-                    } else if (subMaterials.length === 1) {
-                        material = subMaterials[0];
-                    } else {
-                        continue;
-                    }
-
-                    box.material = material;
-
-                    if (element.rotation) {
-                        box.setPivotPoint(
-                            new Vector3(
-                                element.rotation.origin[0],
-                                element.rotation.origin[1],
-                                element.rotation.origin[2]
-                            ),
-                            Space.WORLD
-                        );
-
-                        switch (element.rotation.axis) {
-                            case 'y':
-                                box.rotate(
-                                    Axis.Y,
-                                    element.rotation.angle * -DEG2RAD,
-                                    Space.WORLD
-                                );
-                                break;
-                            case 'x':
-                                box.rotate(
-                                    Axis.X,
-                                    element.rotation.angle * DEG2RAD,
-                                    Space.WORLD
-                                );
-                                break;
-                            case 'z':
-                                box.rotate(
-                                    Axis.Z,
-                                    element.rotation.angle * DEG2RAD,
-                                    Space.WORLD
-                                );
-                                break;
-                        }
-
-                        box.setPivotPoint(new Vector3(0, 0, 0));
-                    }
-
-                    if (modelHolder.x) {
-                        box.rotate(
-                            Axis.X,
-                            -DEG2RAD * modelHolder.x,
-                            Space.WORLD
-                        );
-                    }
-                    if (modelHolder.y) {
-                        box.rotate(
-                            Axis.Y,
-                            -DEG2RAD * modelHolder.y,
-                            Space.WORLD
-                        );
-                    }
-
-                    box.translate(Axis.X, element.from[0] + elementSize[0] / 2)
-                        .translate(Axis.Y, element.from[1] + elementSize[1] / 2)
-                        .translate(
-                            Axis.Z,
-                            element.from[2] + elementSize[2] / 2
-                        );
-
-                    group.push(box);
+                        )
+                    );
                 }
+                box.subMeshes = subMeshes;
+                subMaterials = subMaterials.filter(mat => mat);
+
+                // apply the materials to the submeshes
+                const multiMat = new MultiMaterial(
+                    `${data.name}-multiMat`,
+                    scene
+                );
+
+                for (const material of subMaterials) {
+                    multiMat.subMaterials.push(material);
+                }
+
+                // Assign the multi-material to the mesh
+                box.material = multiMat;
+
+                if (element.rotation) {
+                    applyRotation(box, element.rotation);
+                }
+
+                if (modelHolder.x) {
+                    box.rotate(Axis.X, -DEG2RAD * modelHolder.x, Space.WORLD);
+                }
+                if (modelHolder.y) {
+                    box.rotate(Axis.Y, -DEG2RAD * modelHolder.y, Space.WORLD);
+                }
+
+                box.translate(Axis.X, element.from[0] + elementSize[0] / 2)
+                    .translate(Axis.Y, element.from[1] + elementSize[1] / 2)
+                    .translate(Axis.Z, element.from[2] + elementSize[2] / 2);
+
+                group.push(box);
             }
         }
 

@@ -32,7 +32,7 @@ import {
 } from '@babylonjs/core';
 
 import { GridMaterial } from '@babylonjs/materials';
-import { Inspector } from '@babylonjs/inspector';
+// import { Inspector } from '@babylonjs/inspector';
 
 const CASSETTE_DECK_URL = `https://services.enginehub.org/cassette-deck/minecraft-versions/find?dataVersion=`;
 const URL_1_13 =
@@ -279,9 +279,9 @@ export async function renderSchematic(
     );
 
     const scene = getSceneSetup(engine, backgroundColor);
-    Inspector.Show(scene, {});
+    // Inspector.Show(scene, {});
 
-    // addGrid(scene, -worldHeight / 2);
+    addGrid(scene, -worldHeight / 2);
     const camera = getCameraSetup(scene, cameraOffset, canvas);
 
     let hasDestroyed = false;
@@ -292,6 +292,8 @@ export async function renderSchematic(
         }
         scene.render();
     };
+
+    // Inspector.Show(scene, {});
 
     if (!disableAutoRender) {
         engine.runRenderLoop(render);
@@ -339,18 +341,23 @@ export async function renderSchematic(
         newSchematicString: string
     ) => {
         const meshes = scene.meshes;
-        scene.debugLayer.show();
         const instancedMeshes = meshes.filter(
             mesh => mesh instanceof InstancedMesh
         ) as InstancedMesh[];
         for (const instancedMesh of instancedMeshes) {
             scene.removeMesh(instancedMesh);
-            instancedMesh.dispose(true, false);
+            instancedMesh.dispose();
         }
         // THIS !!!!!!! 
         modelLoader.clearCache();
-
         const newLoadedSchematic = loadSchematic(parseNbt(newSchematicString));
+
+        // get the ground mesh and move it down 
+        const groundMesh = meshes.find(mesh => mesh.name === 'ground');
+        groundMesh.dispose();
+        const { height } = newLoadedSchematic;
+        addGrid(scene, -height / 2);
+
         await updateBlockModelLookup(
             blockModelLookup,
             newLoadedSchematic,
