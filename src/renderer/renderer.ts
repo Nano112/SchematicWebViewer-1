@@ -119,7 +119,6 @@ async function updateBlockModelLookup(
             await resourceLoader
         );
         const blockModelData = modelLoader.getBlockModelData(block, blockState);
-
         if (!blockModelData.models.length) {
             continue;
         }

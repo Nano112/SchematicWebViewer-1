@@ -34,6 +34,24 @@ import {
 const TINT_COLOR = new Color4(145 / 255, 189 / 255, 89 / 255, 1);
 const WATER_COLOR = new Color4(36 / 255, 57 / 255, 214 / 255, 1);
 const LAVA_COLOR = new Color4(232 / 255, 89 / 255, 23 / 255, 1);
+const RESTONE_COLORS = [
+    new Color4(75 / 255, 0, 0, 1),
+    new Color4(110 / 255, 0, 0, 1),
+    new Color4(120 / 255, 0, 0, 1),
+    new Color4(130 / 255, 0, 0, 1),
+    new Color4(140 / 255, 0, 0, 1),
+    new Color4(151 / 255, 0, 0, 1),
+    new Color4(160 / 255, 0, 0, 1),
+    new Color4(170 / 255, 0, 0, 1),
+    new Color4(180 / 255, 0, 0, 1),
+    new Color4(190 / 255, 0, 0, 1),
+    new Color4(201 / 255, 0, 0, 1),
+    new Color4(211 / 255, 0, 0, 1),
+    new Color4(214 / 255, 0, 0, 1),
+    new Color4(224 / 255, 6 / 255, 0, 1),
+    new Color4(233 / 255, 26 / 255, 0, 1),
+    new Color4(244 / 255, 48 / 255, 0, 1),
+];
 const AMBIENT_LIGHT = new Color3(0.5, 0.5, 0.5);
 const DEFAULT_UV = [0, 0, 16, 16];
 
@@ -78,7 +96,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         if (rotation === 0) {
             rotation = undefined;
         }
-
         const cacheKey = `${tex}_rot=${rotation}`;
 
         // TODO - Determine if there's a better way to handle this other than manually caching.
@@ -96,9 +113,8 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         if (blob === undefined) {
             return undefined;
         }
-        // TODO: Figure out why the fuck I have to do this nonsense to get the texture to render correctly.
+        // TODO: Figure out why the fudge I have to do this nonsense to get the texture to render correctly.
         const inverted = faceData.texture === '#top';
-        console.log(faceData, inverted);
         const texture = new Texture(
             blob,
             scene,
@@ -146,7 +162,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                 return a;
             }, [])
             .join(',');
-
         const createWeightedModels = (
             model: BlockStateModelHolder | BlockStateModelHolder[]
         ): BlockModelData['models'][number]['options'] => {
@@ -155,7 +170,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
             }
             return [{ holder: model, weight: 1 }];
         };
-
         if (blockState.variants?.['']) {
             models.push({
                 options: createWeightedModels(blockState.variants['']),
@@ -169,7 +183,12 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                 filter: BlockStateDefinitionVariant<string>
             ) => {
                 for (const property of Object.keys(filter)) {
-                    if (block.properties[property] !== filter[property]) {
+                    const filterProperties = filter[property].split('|');
+
+                    if (
+                        filterProperties.indexOf(block.properties[property]) ===
+                        -1
+                    ) {
                         return false;
                     }
                 }
@@ -178,7 +197,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
 
             for (const part of blockState.multipart) {
                 if (part.when) {
-                    // Check filters
                     if (part.when.OR) {
                         let anyPassed = false;
                         for (const test of part.when.OR) {
@@ -266,13 +284,20 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         }
     }
 
-    function getColorForElement(faceData: any, tex: string): Color4 {
+    function getColorForElement(
+        faceData: any,
+        tex: string,
+        block: Block | undefined
+    ) {
         if (faceData.tintindex !== undefined) {
             return TINT_COLOR;
         } else if (tex.startsWith('block/water_')) {
             return WATER_COLOR;
         } else if (tex.startsWith('block/lava_')) {
             return LAVA_COLOR;
+        } else if (tex.startsWith('block/redstone_dust_')) {
+            const signal_strength = block?.properties?.['power'] ?? 0;
+            return RESTONE_COLORS[signal_strength];
         } else {
             return undefined;
         }
@@ -332,7 +357,7 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
 
             const tex = resolveTexture(faceData.texture, model);
             hasColor = true;
-            colours.push(getColorForElement(faceData, tex));
+            colours.push(getColorForElement(faceData, tex, block));
             subMaterials.push(
                 await getTextureMaterial(
                     tex,
@@ -344,6 +369,7 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
             );
             uvs.push(new Vector4(...faceData.uv));
         }
+
         return { colours, uvs, subMaterials, hasColor };
     }
 
@@ -365,20 +391,11 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
             modelIndex++
         ) {
             const modelHolder = data.holders[modelIndex];
-
             const model = await loadModel(modelHolder.model, resourceLoader);
-            console.log(model);
             if (block.type === 'redstone_wire') {
                 console.log(modelHolder);
                 console.log(model);
-                // make a placeholder texture until we can figure out how to do this properly
-                model.textures['all'] = model.textures.particle;
-                const temporaryModel = deepmerge(
-                    await loadModel('block/cube_all', resourceLoader),
-                    model
-                );
-                model.textures = temporaryModel.textures;
-                model.elements = temporaryModel.elements;
+                console.log(modelHolder.model);
             }
             if (block.type === 'water' || block.type === 'lava') {
                 model.textures['all'] = model.textures.particle;
@@ -422,6 +439,7 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                     },
                     scene
                 );
+                console.log(box);
                 box.doNotSyncBoundingInfo = true;
 
                 const verticesCount = box.getTotalVertices();
