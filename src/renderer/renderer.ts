@@ -32,7 +32,7 @@ import {
 } from '@babylonjs/core';
 
 import { GridMaterial } from '@babylonjs/materials';
-// import { Inspector } from '@babylonjs/inspector';
+import { Inspector } from '@babylonjs/inspector';
 
 const CASSETTE_DECK_URL = `https://services.enginehub.org/cassette-deck/minecraft-versions/find?dataVersion=`;
 const URL_1_13 =

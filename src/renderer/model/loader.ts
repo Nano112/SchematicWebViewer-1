@@ -89,7 +89,8 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         scene: Scene,
         // rotation?: number,
         faceData: any,
-        transparent?: boolean
+        transparent?: boolean,
+        color?: Color3
     ): Promise<Material> {
         // Normalise values for better caching.
         let rotation = faceData.rotation;
@@ -131,10 +132,11 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
 
         const mat = new StandardMaterial(cacheKey, scene);
         mat.diffuseTexture = texture;
-        // mat.useAlphaFromDiffuseTexture = transparent;
         mat.ambientColor = AMBIENT_LIGHT;
-        // mat.disableDepthWrite = transparent;
 
+        if (color) {
+            mat.diffuseColor = color;
+        }
         materialCache.set(cacheKey, mat);
         return mat;
     }
@@ -289,15 +291,14 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         tex: string,
         block: Block | undefined
     ) {
-        if (faceData.tintindex !== undefined) {
+        if (tex.startsWith('block/redstone_dust_')) {
+            return RESTONE_COLORS[block?.properties?.['power'] ?? 0];
+        } else if (faceData.tintindex !== undefined) {
             return TINT_COLOR;
         } else if (tex.startsWith('block/water_')) {
             return WATER_COLOR;
         } else if (tex.startsWith('block/lava_')) {
             return LAVA_COLOR;
-        } else if (tex.startsWith('block/redstone_dust_')) {
-            const signal_strength = block?.properties?.['power'] ?? 0;
-            return RESTONE_COLORS[signal_strength];
         } else {
             return undefined;
         }
@@ -357,14 +358,16 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
 
             const tex = resolveTexture(faceData.texture, model);
             hasColor = true;
-            colours.push(getColorForElement(faceData, tex, block));
+            const color = getColorForElement(faceData, tex, block);
+
             subMaterials.push(
                 await getTextureMaterial(
                     tex,
                     scene,
                     faceData,
                     TRANSPARENT_BLOCKS.has(block.type) ||
-                        faceData.texture.includes('overlay')
+                        faceData.texture.includes('overlay'),
+                    new Color3(color?.r ?? 1, color?.g ?? 1, color?.b ?? 1)
                 )
             );
             uvs.push(new Vector4(...faceData.uv));
@@ -433,13 +436,12 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                         height: elementSize[1] || 0.001,
                         depth: elementSize[2] || 0.001,
                         wrap: true,
-                        faceColors: faceData.colours || undefined,
+                        faceColors: faceData.colours,
                         updatable: false,
-                        faceUV: faceData.uvs || undefined,
+                        faceUV: faceData.uvs,
                     },
                     scene
                 );
-                console.log(box);
                 box.doNotSyncBoundingInfo = true;
 
                 const verticesCount = box.getTotalVertices();
@@ -476,7 +478,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                     multiMat.subMaterials.push(material);
                 }
 
-                // Assign the multi-material to the mesh
                 box.material = multiMat;
 
                 if (element.rotation) {
@@ -493,7 +494,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
                 box.translate(Axis.X, element.from[0] + elementSize[0] / 2)
                     .translate(Axis.Y, element.from[1] + elementSize[1] / 2)
                     .translate(Axis.Z, element.from[2] + elementSize[2] / 2);
-
                 group.push(box);
             }
         }
