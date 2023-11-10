@@ -36,6 +36,24 @@ export interface SchematicHandles {
     swapSchematic(newSchematicString: string): Promise<void>;
 }
 
+export interface ThreeSchematicHandles {
+    /**
+     * @deprecated Use #setSize
+     */
+    resize(size: number): void;
+    /**
+     * Set the size of the renderer.
+     *
+     * @param width The width
+     * @param height The height
+     */
+    setSize(width: number, height: number): void;
+    /**
+     * Cleanup the resources associated with this renderer.
+     */
+    destroy(): void;
+}
+
 export interface GetClientJarUrlProps {
     dataVersion: number;
     corsBypassUrl: string;

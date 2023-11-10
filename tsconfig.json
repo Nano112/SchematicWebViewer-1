@@ -1,5 +1,5 @@
 {
-    "include": ["src/**/*"],
+    "include": ["src/**/*", "../../src/nano_schematic_renderer/threeRessourceLoader.ts", "../../src/nano_schematic_renderer/schematic_renderer.ts"],
     "compilerOptions": {
         "outDir": "dist/esm",
         "sourceMap": true,

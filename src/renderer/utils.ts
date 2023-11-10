@@ -4,6 +4,8 @@ import { decode } from 'nbt-ts';
 import type { Faces, Vector } from './model/types';
 import NonOccludingBlocks from './nonOccluding.json';
 import TransparentBlocks from './transparent.json';
+import { Buffer } from "buffer";
+
 
 export function faceToFacingVector(face: Faces): Vector {
     switch (face) {

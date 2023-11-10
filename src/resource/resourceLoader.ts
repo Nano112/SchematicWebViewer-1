@@ -27,18 +27,25 @@ async function loadZip(jarUrl: string | string[]) {
 export async function getResourceLoader(
     jarUrl: string | string[]
 ): Promise<ResourceLoader> {
+    console.log(jarUrl);
     const zip = await loadZip(jarUrl);
-
+    // console.log(zip);
+    // log the content of "assets"
     const stringCache: Map<string, string> = new Map();
     const blobCache: Map<string, string> = new Map();
 
     const getResourceBlob = async (name: string) => {
+        // log the traceback of the call
+        console.log(new Error().stack);
+        
         if (blobCache.has(name)) {
             return blobCache.get(name);
         } else {
             let data: Blob;
             if (Array.isArray(zip)) {
+
                 for (const zipFile of zip) {
+
                     data = await zipFile
                         .file(`assets/minecraft/${name}`)
                         ?.async('blob');
@@ -46,6 +53,7 @@ export async function getResourceLoader(
                         break;
                     }
                 }
+                console.log(data);
             } else {
                 data = await zip
                     .file(`assets/minecraft/${name}`)

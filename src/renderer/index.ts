@@ -1,2 +1,2 @@
-export type { SchematicHandles, SchematicRenderOptions } from './types';
+export type { SchematicHandles } from './types';
 export { renderSchematic } from './renderer';

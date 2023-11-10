@@ -384,7 +384,9 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         if (modelCache.has(data.name)) {
             return modelCache
                 .get(data.name)
-                .map((mesh, i) => mesh.createInstance(`${data.name}-${i}`));
+                .map((mesh, i) =>
+                    mesh.createInstance(`instance-${data.name}-${i}`)
+                );
         }
 
         const group: Mesh[] = [];
@@ -395,11 +397,6 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
         ) {
             const modelHolder = data.holders[modelIndex];
             const model = await loadModel(modelHolder.model, resourceLoader);
-            if (block.type === 'redstone_wire') {
-                console.log(modelHolder);
-                console.log(model);
-                console.log(modelHolder.model);
-            }
             if (block.type === 'water' || block.type === 'lava') {
                 model.textures['all'] = model.textures.particle;
                 const temporaryModel = deepmerge(
@@ -498,15 +495,17 @@ export function getModelLoader(resourceLoader: ResourceLoader): ModelLoader {
             }
         }
 
-        // We cannot merge these meshes as we lose independent face colours.
         for (const mesh of group) {
             mesh.setEnabled(false);
             mesh.isVisible = false;
         }
+        // modelCache.set(data.name, group);
         modelCache.set(data.name, group);
-        return group.map((mesh, i) => mesh.createInstance(`${data.name}-${i}`));
+        // create a deep copy of the group so that we can create instances of it
+        return group.map((mesh, i) =>
+            mesh.createInstance(`instance-${data.name}-${i}`)
+        );
     };
-
     return {
         clearCache,
         getBlockModelData,
